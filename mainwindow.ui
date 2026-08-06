@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>Stereo by Ivan Ts</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout_2">
@@ -79,7 +79,7 @@
      <x>0</x>
      <y>0</y>
      <width>391</width>
-     <height>17</height>
+     <height>22</height>
     </rect>
    </property>
   </widget>

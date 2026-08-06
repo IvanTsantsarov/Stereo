@@ -49,7 +49,10 @@ void MainWindow::loadImages()
         mStereo = nullptr;
     }
 
-    QString selected = QFileDialog::getOpenFileName( this, "Select a double (left and right) image", "../res", "*.png;*.jpeg");
+    QString filter = "Images (*.png *.jpg);;All Files (*)";
+    QString selected = QFileDialog::getOpenFileName( this,
+                                                    "Select a double (left and right) image",
+                                                    "../../res", filter);
 
     if( selected.isEmpty() ) {
         return;
@@ -64,6 +67,8 @@ void MainWindow::loadImages()
 
     MainWindow::setBtnImage(ui->btnLeft, mStereo->leftImage());
     MainWindow::setBtnImage(ui->btnRight, mStereo->rightImage());
+
+    mStereo->process();
 }
 
 MainWindow::MainWindow(QWidget *parent)
