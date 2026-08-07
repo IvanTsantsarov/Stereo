@@ -1,9 +1,17 @@
 #include "stereo.h"
+#include "mainwindow.h"
 #include <QDebug>
 #include <algorithm>
 
-#define DISPARITY_STENCIL_SIZE 10
-#define STENCIL_SIZE (DISPARITY_STENCIL_SIZE*2 + 1)
+// /        STENCIL_SIZE       \
+//(--------------X--------------)
+// \STENCIL_SIDE/|\STENCIL_SIDE/
+//               |
+//         current value
+#define STENCIL_SIDE 6
+#define STENCIL_SIZE (STENCIL_SIDE*2 + 1)
+
+#define DISPARITY_PART 0.1f
 
 #define MIN_DIFF 0.0001f
 #define INVALID_DIST 10e6
@@ -34,6 +42,7 @@ bool Stereo::isPowerOfTwo(uint value)
 
 Stereo::Stereo() {
 
+    mDepthK = 50.0f;//focalLengthPixels * baseline
 }
 
 // Loading double (left and right eye) images from a single image
@@ -67,6 +76,7 @@ bool Stereo::loadImages(const QString &path)
     }
 
     mPixelsCount = mSide * mSide;
+    mDisparitySize = DISPARITY_PART * mSide;
 
     mLeft.reserve(mPixelsCount);
     mRight.reserve(mPixelsCount);
@@ -90,6 +100,11 @@ bool Stereo::loadImages(const QString &path)
         }
     }
 
+    mStage = Stage::ImagesLoaded;
+
+    // disparity left & right rows progress
+    gMainWindow->setProgressSteps(mSide*2);
+
     INF << "Loading image done!";
 
     return true;
@@ -104,14 +119,19 @@ void Stereo::fillStencil(int x, int y,
     // posible values: [-1, 0, 1]
     outStencil.fill(100);
 
-    // fill stencil map
+    // get current pixel value
     float value = isLeft ? leftValue(x, y) : rightValue(x, y);
-    int startx = std::max( x - DISPARITY_STENCIL_SIZE, 0);
-    int endx = std::min(x + DISPARITY_STENCIL_SIZE, (int)mSide - 1);
+
+    // set start and end borders
+    int startx = std::max(x - STENCIL_SIDE, 0);
+    int endx = std::min(x + STENCIL_SIDE, (int)mSide - 1);
+
     for( int dx = startx; dx <= endx; dx ++) {
+
+        // calculate diff between current
         float diff = (isLeft ? leftValue(dx, y) : rightValue(dx, y)) - value;
 
-        int outStencilIndex = dx - x + DISPARITY_STENCIL_SIZE;
+        int outStencilIndex = dx - x + STENCIL_SIDE;
         if( std::abs(diff) < MIN_DIFF) {
             outStencil[outStencilIndex] = 0;
         }else
@@ -123,18 +143,18 @@ void Stereo::fillStencil(int x, int y,
         }
     }
 
-    outStartX = startx - x;
-    outEndX = endx - x;
+    outStartX = startx - x + STENCIL_SIDE;
+    outEndX = endx - x + STENCIL_SIDE;
 }
 
 // fill stencil from other image at position (x,y)
 // compare with input stencil
 // return distance
 uint Stereo::compareWithStencil(int x, int y, int sx, int ex,
-                                const QVector<int8_t> &stencil, bool isLeft)
+                                const QVector<int8_t> &stencil,
+                                QVector<int8_t>& stencilOther,
+                                bool isLeft)
 {
-    QVector<int8_t> stencilOther(2*DISPARITY_STENCIL_SIZE + 1);
-
     int startOtherX, endOtherX;
     fillStencil(x, y, startOtherX, endOtherX, stencilOther, !isLeft);
 
@@ -155,6 +175,9 @@ void Stereo::calculateDisparity(bool isLeft)
     // stencil keeps first derivative that characterize a pixel
     // by surrounding pixels
     QVector<int8_t> stencil(STENCIL_SIZE);
+    QVector<int8_t> stencilOther(STENCIL_SIZE);
+
+    QVector<float> &disparity = isLeft ? mLeftDisp : mRightDisp;
 
     // vector with all distances for the row
     QVector<uint> distances(mSide);
@@ -168,31 +191,106 @@ void Stereo::calculateDisparity(bool isLeft)
             uint minDist = STENCIL_SIZE;
             uint correspondingX = 0;
 
-            for( int ox = 0; ox < mSide; ox ++) {
-                uint dist = compareWithStencil(x, y, sx, ex, stencil, isLeft);
+            uint oxstart = std::max(x - mDisparitySize, 0);
+            uint oxend = std::min(x + mDisparitySize, (int)mSide-1);
+            for( int ox = oxstart; ox < oxend; ox ++) {
+                uint dist = compareWithStencil(ox, y, sx, ex, stencil, stencilOther, isLeft);
                 if( dist < minDist ) {
                     minDist = dist;
                     correspondingX = ox;
                 }
             }
 
-            if( isLeft ) {
-                mLeftDisp[x + y*mSide] = x - correspondingX;
-            }else {
-                mRightDisp[x + y*mSide] = x - correspondingX;
-            }
+            disparity[x + y*mSide] = x - correspondingX;
+        }
+
+        gMainWindow->stepProgress();
+        if( mIsAborting ) {
+            return;
         }
     }
 }
 
+void Stereo::calculateDepth()
+{
+    INF << "Calculating depth...";
+
+    float minDepth = MAXFLOAT;
+    float maxDepth = -MAXFLOAT;
+
+    int index = 0;
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            float valL = mLeftDisp[index];
+            float valR = mRightDisp[index];
+            if( valL > MAX_DIST_CMP) valL = valR;
+            if( valR > MAX_DIST_CMP) valR = valL;
+            float disparity = (valL + valR) * 0.5;
+
+            if( disparity < MAX_DIST_CMP && disparity )  {
+                float depth = mDepthK / disparity;
+
+                if( depth > maxDepth ) maxDepth = depth;
+                if( depth < minDepth ) minDepth = depth;
+
+                mDepth[index] = depth ;
+            }
+            index ++;
+        }
+    }
+
+    INF << "Min depth:" << minDepth << "Max depth:" << maxDepth;
+
+    float scaleDepth = 1.0f / (maxDepth - minDepth);
+    mDepthImage = QImage(mSide, mSide, mLeftImage.format());
+
+    index = 0;
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            float val = mDepth[index];
+            if( val < MAX_DIST_CMP ) {
+                // valid depth
+                float intensityNorm = (val - minDepth) * scaleDepth;
+                INF << val;
+                uint8_t col = intensityNorm * 255;
+                mDepthImage.setPixel(x, y, qRgb(col, col, col));
+            }else {
+                // invalid depth
+                mDepthImage.setPixel(x, y, qRgb(255, 0, 255));
+            }
+            index ++;
+        }
+    }
+
+
+}
+
 void Stereo::process()
 {
+    mIsAborting = false;
     mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, INVALID_DIST);
 
     mDepth.fill(INVALID_DIST);
     mLeftDisp.fill(INVALID_DIST);
     mRightDisp.fill(INVALID_DIST);
 
+    mStage = Stage::ProcessingLeft;
     calculateDisparity(true); // left
-    calculateDisparity(false); // right
+
+    if( !mIsAborting ) {
+        mStage = Stage::ProcessingRight;
+        calculateDisparity(false); // right
+    }else{
+        gMainWindow->aborted();
+    }
+
+    if( !mIsAborting) {
+        calculateDepth();
+        gMainWindow->finished();
+    }else {
+        gMainWindow->aborted();
+    }
+
+
+    mStage = Stage::Ready;
 }

@@ -28,13 +28,23 @@ public:
     void onError(const QString& txt);
     static void setBtnImage(QPushButton* btn, const QImage& img);
 
+    void process();
+    void setProgressSteps(uint steps);
+    void stepProgress();
+    void aborted();
+    void finished();
+
 private slots:
     void on_btnLeft_clicked();
 
     void on_btnRight_clicked();
 
+    void on_btnProcess_clicked();
+
 private:
     Ui::MainWindow *ui;
 };
+
+extern MainWindow* gMainWindow;
 
 #endif // MAINWINDOW_H

@@ -42,20 +42,50 @@ void MainWindow::setBtnImage(QPushButton *btn, const QImage &img)
     btn->setText("");
 }
 
+void MainWindow::process()
+{
+    ui->btnProcess->setText("Processing...");
+    QCoreApplication::processEvents();
+    mStereo->process();
+}
+
+void MainWindow::setProgressSteps(uint steps)
+{
+    ui->progressBar->setMinimum(0);
+    ui->progressBar->setMaximum(steps);
+    ui->progressBar->setValue(0);
+}
+
+void MainWindow::stepProgress()
+{
+    ui->progressBar->setValue(ui->progressBar->value() + 1);
+    QCoreApplication::processEvents();
+}
+
+void MainWindow::aborted()
+{
+    ui->btnProcess->setText("Aborted");
+}
+
+void MainWindow::finished()
+{
+    setBtnImage(ui->btnResult, mStereo->depthImage());
+    ui->btnProcess->setText("Ready!");
+}
+
 void MainWindow::loadImages()
 {
-    if( mStereo ) {
-        delete mStereo;
-        mStereo = nullptr;
-    }
-
     QString filter = "Images (*.png *.jpg);;All Files (*)";
     QString selected = QFileDialog::getOpenFileName( this,
                                                     "Select a double (left and right) image",
                                                     "../../res", filter);
-
     if( selected.isEmpty() ) {
         return;
+    }
+
+    if( mStereo ) {
+        delete mStereo;
+        mStereo = nullptr;
     }
 
     mStereo = new Stereo;
@@ -67,8 +97,6 @@ void MainWindow::loadImages()
 
     MainWindow::setBtnImage(ui->btnLeft, mStereo->leftImage());
     MainWindow::setBtnImage(ui->btnRight, mStereo->rightImage());
-
-    mStereo->process();
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -110,5 +138,27 @@ void MainWindow::on_btnLeft_clicked()
 void MainWindow::on_btnRight_clicked()
 {
     loadImages();
+}
+
+
+void MainWindow::on_btnProcess_clicked()
+{
+    if( !mStereo || !mStereo->hasImages()) {
+        QMessageBox::critical(this, "No ready!", "First press upper left or right image slots to load left & right images...");
+        return;
+    }
+
+    if( mStereo->isAborting()) {
+        QMessageBox::warning(this, "Aborting...", "Wait to finish aboring");
+        return;
+    }
+
+    if( !mStereo->isProcessing()) {
+        process();
+    }else {
+        mStereo->abort();
+        ui->btnProcess->setText("Aborting...");
+        QCoreApplication::processEvents();
+    }
 }
 
