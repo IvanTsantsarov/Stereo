@@ -3,33 +3,26 @@
 
 #include <QImage>
 #include <QObject>
+#include <opencv2/opencv.hpp>
+
+typedef QVector<float> FloatVector;
 
 class Stereo
 {
-    QVector<float> mLeft, mRight, mLeftDisp, mRightDisp, mDepth;
+    FloatVector mLeft, mRight; // normalized floating point intesity
+    FloatVector mLeftDisp, mRightDisp, mDepth;
     uint mSide = 0;
     uint mPixelsCount = 0;
     int mDisparitySize = 0;
     float mDepthK = 0.0f;
-    QImage mLeftImage, mRightImage, mDepthImage;
+    QImage mLeftImage, mRightImage, mDisparityImage, mDepthImage;
     inline float leftValue(int x, int y){ return mLeft[x + y*mSide];}
     inline float rightValue(int x, int y){ return mRight[x + y*mSide];}
 
     static bool isPowerOfTwo(uint value);
 
-    void fillStencil(int x, int y,
-                     int &outStartX, int &outEndX,
-                     QVector<int8_t>& outStencil, bool isLeft);
 
-    uint compareWithStencil(int x, int y,
-                            int sx, int ex,
-                            const QVector<int8_t>& stencil,
-                            QVector<int8_t> &stencilOther,
-                            bool isLeft);
-
-    void calculateDisparity(bool isLeft);
-
-    void calculateDepth();
+    QImage cvDisparity();
 
     bool mIsAborting = false;
 public:
@@ -46,9 +39,11 @@ public:
     bool loadImages(const QString& path);
     const QImage& leftImage(){ return mLeftImage; }
     const QImage& rightImage(){ return mRightImage; }
+    const QImage& disparityImage(){ return mDisparityImage; }
     const QImage& depthImage(){ return mDepthImage; }
+    QImage anaglyphImage();
 
-    void process();
+    void process(bool isOpenCV);
     void abort(){ mIsAborting = true; }
 private:
     Stage mStage = Initial;

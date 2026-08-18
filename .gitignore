@@ -1,0 +1,4 @@
+*.user
+.qtcreator/
+build/
+res/others/

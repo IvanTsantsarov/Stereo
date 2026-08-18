@@ -1,0 +1,208 @@
+///////////////////////////////////////////////////////////////////////////
+void fillStencil(int x, int y,
+                 int &outStartX, int &outEndX,
+                 QVector<int8_t>& outStencil, bool isLeft);
+
+uint compareWithStencil(int x, int y,
+                        int sx, int ex,
+                        const QVector<int8_t>& stencil,
+                        QVector<int8_t> &stencilOther,
+                        bool isLeft);
+
+void calculateDisparity(bool isLeft);
+
+void calculateDepth();
+///////////////////////////////////////////////////////////////////////////
+void Stereo::fillStencil(int x, int y,
+                         int& outStartX, int& outEndX,
+                         QVector<int8_t> &outStencil,
+                         bool isLeft)
+{
+    // invalidate all values
+    // posible values: [-1, 0, 1]
+    outStencil.fill(100);
+
+    // get current pixel value
+    float value = isLeft ? leftValue(x, y) : rightValue(x, y);
+
+    // set start and end borders
+    int startx = std::max(x - STENCIL_SIDE, 0);
+    int endx = std::min(x + STENCIL_SIDE, (int)mSide - 1);
+
+    for( int dx = startx; dx <= endx; dx ++) {
+
+        // calculate diff between current
+        float diff = (isLeft ? leftValue(dx, y) : rightValue(dx, y)) - value;
+
+        int outStencilIndex = dx - x + STENCIL_SIDE;
+        if( std::abs(diff) < MIN_DIFF) {
+            outStencil[outStencilIndex] = 0;
+        }else
+        if( diff < 0.0f ) {
+            outStencil[outStencilIndex] = -1;
+        }else
+        {
+            outStencil[outStencilIndex] = 1;
+        }
+    }
+
+    outStartX = startx - x + STENCIL_SIDE;
+    outEndX = endx - x + STENCIL_SIDE;
+}
+
+// fill stencil from other image at position (x,y)
+// compare with input stencil
+// return distance
+uint Stereo::compareWithStencil(int x, int y, int sx, int ex,
+                                const QVector<int8_t> &stencil,
+                                QVector<int8_t>& stencilOther,
+                                bool isLeft)
+{
+    int startOtherX, endOtherX;
+    fillStencil(x, y, startOtherX, endOtherX, stencilOther, !isLeft);
+
+    int startX = std::max(sx, startOtherX);
+    int endX = std::min(ex, endOtherX);
+    uint distance = 0;
+    for( uint tx = startX; tx <= endX; tx ++) {
+        if( stencil[tx] != stencilOther[tx] ) {
+            distance ++;
+        }
+    }
+
+    return distance;
+}
+
+void Stereo::calculateDisparity(bool isLeft)
+{
+    // stencil keeps first derivative that characterize a pixel
+    // by surrounding pixels
+    QVector<int8_t> stencil(STENCIL_SIZE);
+    QVector<int8_t> stencilOther(STENCIL_SIZE);
+
+    QVector<float> &disparity = isLeft ? mLeftDisp : mRightDisp;
+
+    // vector with all distances for the row
+    QVector<uint> distances(mSide);
+
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            int sx, ex;
+            fillStencil(x, y, sx, ex, stencil, isLeft);
+
+            // find the minimum distances pixel
+            uint minDist = STENCIL_SIZE;
+            uint correspondingX = 0;
+
+            uint oxstart = std::max(x - mDisparitySize, 0);
+            uint oxend = std::min(x + mDisparitySize, (int)mSide-1);
+            for( int ox = oxstart; ox < oxend; ox ++) {
+                uint dist = compareWithStencil(ox, y, sx, ex, stencil, stencilOther, isLeft);
+                if( dist < minDist ) {
+                    minDist = dist;
+                    correspondingX = ox;
+                }
+            }
+
+            disparity[x + y*mSide] = x - correspondingX;
+        }
+
+        gMainWindow->stepProgress();
+        if( mIsAborting ) {
+            return;
+        }
+    }
+}
+
+void Stereo::calculateDepth()
+{
+    INF << "Calculating depth...";
+
+    float minDepth = MAX_FLOAT;
+    float maxDepth = -MAX_FLOAT;
+
+    int index = 0;
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            float valL = mLeftDisp[index];
+            float valR = mRightDisp[index];
+            if( valL > MAX_DIST_CMP) valL = valR;
+            if( valR > MAX_DIST_CMP) valR = valL;
+            float disparity = (valL + valR) * 0.5;
+
+            if( disparity < MAX_DIST_CMP && disparity )  {
+                float depth = disparity;//mDepthK / disparity;
+
+                if( depth > maxDepth ) maxDepth = depth;
+                if( depth < minDepth ) minDepth = depth;
+
+                mDepth[index] = depth ;
+            }
+            index ++;
+        }
+    }
+
+    INF << "Min depth:" << minDepth << "Max depth:" << maxDepth;
+
+    float scaleDepth = 1.0f / (maxDepth - minDepth);
+    mDepthImage = QImage(mSide, mSide, mLeftImage.format());
+
+    index = 0;
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            float val = mDepth[index];
+            if( val < MAX_DIST_CMP ) {
+                // valid depth
+                float intensityNorm = (val - minDepth) * scaleDepth;
+                // INF << val;
+                uint8_t col = intensityNorm * 255;
+                mDepthImage.setPixel(x, y, qRgb(col, col, col));
+            }else {
+                // invalid depth
+                mDepthImage.setPixel(x, y, COLOR_BACK);
+            }
+            index ++;
+        }
+    }
+
+
+}
+
+
+void Stereo::process(bool isOpenCV)
+{
+    mIsAborting = false;
+    mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, INVALID_DIST);
+
+    mDepth.fill(INVALID_DIST);
+    mLeftDisp.fill(INVALID_DIST);
+    mRightDisp.fill(INVALID_DIST);
+
+    if( isOpenCV ) {
+        mDisparityImage = cvDisparity();
+    }
+    else {
+        mStage = Stage::ProcessingLeft;
+        calculateDisparity(true); // left
+
+        if( !mIsAborting ) {
+            mStage = Stage::ProcessingRight;
+            calculateDisparity(false); // right
+        }else{
+            gMainWindow->aborted();
+        }
+
+        if( !mIsAborting) {
+            calculateDepth();
+            gMainWindow->finished();
+        }else {
+            gMainWindow->aborted();
+        }
+    }
+
+    mStage = Stage::Ready;
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////

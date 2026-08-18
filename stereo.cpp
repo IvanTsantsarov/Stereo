@@ -2,6 +2,8 @@
 #include "mainwindow.h"
 #include <QDebug>
 #include <algorithm>
+#include <vector>
+
 
 // /        STENCIL_SIZE       \
 //(--------------X--------------)
@@ -19,7 +21,14 @@
 
 #define ERR qCritical() << __FILE__ << __FUNCTION__ << ":"
 #define INF qInfo() << __FILE__ << __FUNCTION__ << ":"
-#define RGB2VAL(__rgb__) ( qRed(__rgb__)*0.2989f +  qGreen(__rgb__)*0.5870f + qBlue(__rgb__)*0.1140f )
+#define RGB2VAL(__rgb__) ( __rgb__.red()*0.2989f +  __rgb__.green()*0.5870f + __rgb__.blue()*0.1140f )
+#define RGBA2VAL(__rgba__) (( __rgba__.red()*0.2989f +  __rgba__.green()*0.5870f + __rgba__.blue()*0.1140f) * __rgba__.alpha() * 1.0f/255.0f)
+#define RGB2VAL_NORM(__rgb__)(RGB2VAL(__rgb__) * 1.0f/255.0f)
+#define RGBA2VAL_NORM(__rgba__)(RGBA2VAL(__rgba__) * 1.0f/255.0f)
+
+#define MAX_FLOAT 1e8f
+
+#define COLOR_BACK qRgb(255, 0, 255)
 
 bool Stereo::isPowerOfTwo(uint value)
 {
@@ -87,16 +96,23 @@ bool Stereo::loadImages(const QString &path)
     // mLeftImage.fill(QColor(255, 0, 0));
     // mRightImage.fill(QColor(0, 255, 0));
 
+    bool hasAlpha = img.hasAlphaChannel();
+
     for( uint y = 0; y < mSide; y ++) {
         for( uint x = 0; x < mSide; x ++) {
-            QRgb pixelLeft = img.pixel(x, y);
-            QRgb pixelRight = img.pixel(x + mSide, y);
+            QColor pixelLeft = img.pixelColor(x, y);
+            QColor pixelRight = img.pixelColor(x + mSide, y);
 
-            mLeftImage.setPixel(x, y, pixelLeft);
-            mRightImage.setPixel(x, y, pixelRight);
+            mLeftImage.setPixelColor(x, y, pixelLeft);
+            mRightImage.setPixelColor(x, y, pixelRight);
 
-            mLeft.append(RGB2VAL(pixelLeft));
-            mRight.append(RGB2VAL(pixelRight));
+            if( hasAlpha ) {
+                mLeft.append( RGBA2VAL_NORM(pixelLeft) );
+                mRight.append( RGBA2VAL_NORM(pixelRight) );
+            }else {
+                mLeft.append( RGB2VAL_NORM(pixelLeft) );
+                mRight.append( RGB2VAL_NORM(pixelRight) );
+            }
         }
     }
 
@@ -110,162 +126,27 @@ bool Stereo::loadImages(const QString &path)
     return true;
 }
 
-void Stereo::fillStencil(int x, int y,
-                         int& outStartX, int& outEndX,
-                         QVector<int8_t> &outStencil,
-                         bool isLeft)
+// Combines both left&right image into single Anaglyph image
+QImage Stereo::anaglyphImage()
 {
-    // invalidate all values
-    // posible values: [-1, 0, 1]
-    outStencil.fill(100);
+    QImage result(mSide, mSide, mLeftImage.format());
 
-    // get current pixel value
-    float value = isLeft ? leftValue(x, y) : rightValue(x, y);
-
-    // set start and end borders
-    int startx = std::max(x - STENCIL_SIDE, 0);
-    int endx = std::min(x + STENCIL_SIDE, (int)mSide - 1);
-
-    for( int dx = startx; dx <= endx; dx ++) {
-
-        // calculate diff between current
-        float diff = (isLeft ? leftValue(dx, y) : rightValue(dx, y)) - value;
-
-        int outStencilIndex = dx - x + STENCIL_SIDE;
-        if( std::abs(diff) < MIN_DIFF) {
-            outStencil[outStencilIndex] = 0;
-        }else
-        if( diff < 0.0f ) {
-            outStencil[outStencilIndex] = -1;
-        }else
-        {
-            outStencil[outStencilIndex] = 1;
+    for( uint y = 0; y < mSide; y ++) {
+        int offset = y * mSide;
+        for( uint x = 0; x < mSide; x ++) {
+            int index = offset + x;
+            float lval = mLeft[index] * 255;
+            float rval = mRight[index]  * 255;
+            float average = (rval+lval) * 0.5f;
+            QColor pixel = QColor(lval, average, rval);
+            result.setPixelColor(x, y, pixel);
         }
     }
-
-    outStartX = startx - x + STENCIL_SIDE;
-    outEndX = endx - x + STENCIL_SIDE;
+    return result;
 }
 
-// fill stencil from other image at position (x,y)
-// compare with input stencil
-// return distance
-uint Stereo::compareWithStencil(int x, int y, int sx, int ex,
-                                const QVector<int8_t> &stencil,
-                                QVector<int8_t>& stencilOther,
-                                bool isLeft)
-{
-    int startOtherX, endOtherX;
-    fillStencil(x, y, startOtherX, endOtherX, stencilOther, !isLeft);
 
-    int startX = std::max(sx, startOtherX);
-    int endX = std::min(ex, endOtherX);
-    uint distance = 0;
-    for( uint tx = startX; tx <= endX; tx ++) {
-        if( stencil[tx] != stencilOther[tx] ) {
-            distance ++;
-        }
-    }
-
-    return distance;
-}
-
-void Stereo::calculateDisparity(bool isLeft)
-{
-    // stencil keeps first derivative that characterize a pixel
-    // by surrounding pixels
-    QVector<int8_t> stencil(STENCIL_SIZE);
-    QVector<int8_t> stencilOther(STENCIL_SIZE);
-
-    QVector<float> &disparity = isLeft ? mLeftDisp : mRightDisp;
-
-    // vector with all distances for the row
-    QVector<uint> distances(mSide);
-
-    for( int y = 0; y < mSide; y ++) {
-        for( int x = 0; x < mSide; x ++) {
-            int sx, ex;
-            fillStencil(x, y, sx, ex, stencil, isLeft);
-
-            // find the minimum distances pixel
-            uint minDist = STENCIL_SIZE;
-            uint correspondingX = 0;
-
-            uint oxstart = std::max(x - mDisparitySize, 0);
-            uint oxend = std::min(x + mDisparitySize, (int)mSide-1);
-            for( int ox = oxstart; ox < oxend; ox ++) {
-                uint dist = compareWithStencil(ox, y, sx, ex, stencil, stencilOther, isLeft);
-                if( dist < minDist ) {
-                    minDist = dist;
-                    correspondingX = ox;
-                }
-            }
-
-            disparity[x + y*mSide] = x - correspondingX;
-        }
-
-        gMainWindow->stepProgress();
-        if( mIsAborting ) {
-            return;
-        }
-    }
-}
-
-void Stereo::calculateDepth()
-{
-    INF << "Calculating depth...";
-
-    float minDepth = MAXFLOAT;
-    float maxDepth = -MAXFLOAT;
-
-    int index = 0;
-    for( int y = 0; y < mSide; y ++) {
-        for( int x = 0; x < mSide; x ++) {
-            float valL = mLeftDisp[index];
-            float valR = mRightDisp[index];
-            if( valL > MAX_DIST_CMP) valL = valR;
-            if( valR > MAX_DIST_CMP) valR = valL;
-            float disparity = (valL + valR) * 0.5;
-
-            if( disparity < MAX_DIST_CMP && disparity )  {
-                float depth = mDepthK / disparity;
-
-                if( depth > maxDepth ) maxDepth = depth;
-                if( depth < minDepth ) minDepth = depth;
-
-                mDepth[index] = depth ;
-            }
-            index ++;
-        }
-    }
-
-    INF << "Min depth:" << minDepth << "Max depth:" << maxDepth;
-
-    float scaleDepth = 1.0f / (maxDepth - minDepth);
-    mDepthImage = QImage(mSide, mSide, mLeftImage.format());
-
-    index = 0;
-    for( int y = 0; y < mSide; y ++) {
-        for( int x = 0; x < mSide; x ++) {
-            float val = mDepth[index];
-            if( val < MAX_DIST_CMP ) {
-                // valid depth
-                float intensityNorm = (val - minDepth) * scaleDepth;
-                INF << val;
-                uint8_t col = intensityNorm * 255;
-                mDepthImage.setPixel(x, y, qRgb(col, col, col));
-            }else {
-                // invalid depth
-                mDepthImage.setPixel(x, y, qRgb(255, 0, 255));
-            }
-            index ++;
-        }
-    }
-
-
-}
-
-void Stereo::process()
+void Stereo::process(bool isOpenCV)
 {
     mIsAborting = false;
     mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, INVALID_DIST);
@@ -274,23 +155,84 @@ void Stereo::process()
     mLeftDisp.fill(INVALID_DIST);
     mRightDisp.fill(INVALID_DIST);
 
-    mStage = Stage::ProcessingLeft;
-    calculateDisparity(true); // left
+    if( isOpenCV ) {
+        // Use OpenCV disparity
+        mDisparityImage = cvDisparity();
+    }
+    else {
+        // To be implmented with own disparity
+        mStage = Stage::ProcessingLeft;
 
-    if( !mIsAborting ) {
-        mStage = Stage::ProcessingRight;
-        calculateDisparity(false); // right
-    }else{
-        gMainWindow->aborted();
+        if( !mIsAborting ) {
+            mStage = Stage::ProcessingRight;
+
+        }else{
+            gMainWindow->aborted();
+        }
     }
 
     if( !mIsAborting) {
-        calculateDepth();
         gMainWindow->finished();
     }else {
         gMainWindow->aborted();
     }
 
-
     mStage = Stage::Ready;
+}
+
+
+// Computes the disparity map from rectified left and right cv::Mat images
+QImage Stereo::cvDisparity() {
+
+    cv::Mat left32(mSide, mSide, CV_32FC1, mLeft.data());
+    cv::Mat right32(mSide, mSide, CV_32FC1, mRight.data());
+
+    cv::Mat left, right;
+    left32.convertTo(left, CV_8U, 255.0);
+    right32.convertTo(right, CV_8U, 255.0);
+
+    qDebug() << "Left:" << left.size().width <<"x" << left.size().height <<"x" << left.depth() <<"|"<< left.type();
+    qDebug() << "Right:" << right.size().width <<"x" << right.size().height <<"x" << right.depth() <<"|"<< right.type();
+
+    // Configure StereoSGBM parameters
+    int minDisparity = 0;
+    int numDisparities = 64; // Must be divisible by 16
+    int blockSize = 1;       // Must be an odd number >= 1
+
+    cv::Ptr<cv::StereoSGBM> sgbm = cv::StereoSGBM::create(
+        minDisparity,
+        numDisparities,
+        blockSize
+        );
+
+    // Set additional SGBM parameters for smoother maps
+    sgbm->setP1(8 * left.channels() * blockSize * blockSize);
+    sgbm->setP2(32 * left.channels() * blockSize * blockSize);
+    sgbm->setDisp12MaxDiff(1);
+    sgbm->setPreFilterCap(63);
+    sgbm->setUniquenessRatio(15);
+    sgbm->setSpeckleWindowSize(100);
+    sgbm->setSpeckleRange(32);
+    sgbm->setMode(cv::StereoSGBM::MODE_SGBM);
+
+    // Compute disparity (Output is CV_16S / 16-bit signed integer)
+    cv::Mat disparity16S;
+    sgbm->compute(left, right, disparity16S);
+
+    // Normalize and convert to 8-bit unsigned integer (CV_8U) for visual representation
+    cv::Mat disparity8U;
+    cv::normalize(disparity16S, disparity8U, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+
+    QImage result(mSide, mSide, mLeftImage.format());
+
+    int index = 0;
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            uint8_t v = disparity8U.at<uint8_t>(index);
+            result.setPixelColor(x, y, QColor(v, v, v));
+            index ++;
+        }
+    }
+
+    return result;
 }

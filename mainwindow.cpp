@@ -46,7 +46,7 @@ void MainWindow::process()
 {
     ui->btnProcess->setText("Processing...");
     QCoreApplication::processEvents();
-    mStereo->process();
+    mStereo->process(ui->checkOpenCV->isChecked());
 }
 
 void MainWindow::setProgressSteps(uint steps)
@@ -69,7 +69,10 @@ void MainWindow::aborted()
 
 void MainWindow::finished()
 {
-    setBtnImage(ui->btnResult, mStereo->depthImage());
+    ui->progressBar->setValue(ui->progressBar->maximum());
+
+    setBtnImage(ui->btnDisparity, mStereo->disparityImage());
+
     ui->btnProcess->setText("Ready!");
 }
 
@@ -97,6 +100,8 @@ void MainWindow::loadImages()
 
     MainWindow::setBtnImage(ui->btnLeft, mStereo->leftImage());
     MainWindow::setBtnImage(ui->btnRight, mStereo->rightImage());
+    MainWindow::setBtnImage(ui->btnAnaglypth, mStereo->anaglyphImage());
+
 }
 
 MainWindow::MainWindow(QWidget *parent)
