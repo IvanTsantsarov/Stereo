@@ -17,7 +17,7 @@ find_package(OpenCV REQUIRED)
 
 qt_standard_project_setup()
 
-qt_add_executable(StereoDepth
+qt_add_executable(Stereo
     WIN32 MACOSX_BUNDLE
     main.cpp
     mainwindow.cpp
@@ -27,7 +27,7 @@ qt_add_executable(StereoDepth
     trash.txt
 )
 
-target_link_libraries(StereoDepth
+target_link_libraries(Stereo
     PRIVATE
         Qt::Core
         Qt::Widgets
@@ -36,16 +36,16 @@ target_link_libraries(StereoDepth
 )
 
 # Map the include paths so your source files can resolve #include <opencv2/...>
-target_include_directories(StereoDepth PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_include_directories(Stereo PRIVATE ${OpenCV_INCLUDE_DIRS})
 
-install(TARGETS StereoDepth
+install(TARGETS Stereo
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
 qt_generate_deploy_app_script(
-    TARGET StereoDepth
+    TARGET Stereo
     OUTPUT_SCRIPT deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR
 )

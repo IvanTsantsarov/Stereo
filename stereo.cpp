@@ -92,6 +92,8 @@ bool Stereo::loadImages(const QString &path)
 
     mLeftImage = QImage(mSide, mSide, img.format());
     mRightImage = QImage(mSide, mSide, img.format());
+    mDepthImage = QImage(mSide, mSide, img.format());
+    mDisparityImage = QImage(mSide, mSide, img.format());
 
     // mLeftImage.fill(QColor(255, 0, 0));
     // mRightImage.fill(QColor(0, 255, 0));
@@ -156,8 +158,10 @@ void Stereo::process(bool isOpenCV)
     mRightDisp.fill(INVALID_DIST);
 
     if( isOpenCV ) {
+
         // Use OpenCV disparity
-        mDisparityImage = cvDisparity();
+        // on Blender 51mm cam standart params
+        cvDisparityDepth(0.0051f, 0.065f);
     }
     else {
         // To be implmented with own disparity
@@ -182,7 +186,7 @@ void Stereo::process(bool isOpenCV)
 
 
 // Computes the disparity map from rectified left and right cv::Mat images
-QImage Stereo::cvDisparity() {
+void Stereo::cvDisparityDepth(float focalLengthPx, float baselineMeters) {
 
     cv::Mat left32(mSide, mSide, CV_32FC1, mLeft.data());
     cv::Mat right32(mSide, mSide, CV_32FC1, mRight.data());
@@ -223,16 +227,51 @@ QImage Stereo::cvDisparity() {
     cv::Mat disparity8U;
     cv::normalize(disparity16S, disparity8U, 0, 255, cv::NORM_MINMAX, CV_8UC1);
 
-    QImage result(mSide, mSide, mLeftImage.format());
-
     int index = 0;
     for( int y = 0; y < mSide; y ++) {
         for( int x = 0; x < mSide; x ++) {
             uint8_t v = disparity8U.at<uint8_t>(index);
-            result.setPixelColor(x, y, QColor(v, v, v));
+            mDisparityImage.setPixelColor(x, y, QColor(v, v, v));
             index ++;
         }
     }
 
-    return result;
+
+    // Create an empty floating-point matrix for the depth map (CV_32F)
+    cv::Mat depthMap = cv::Mat::zeros(disparity16S.size(), CV_32FC1);
+
+    // Constant scaling factor: f * B * 16 (since raw disparity is multiplied by 16)
+    float fB16 = focalLengthPx * baselineMeters * 16.0;
+
+    for (int r = 0; r < disparity16S.rows; ++r) {
+        // Direct pointer access for performance
+        const int16_t* dispRow = disparity16S.ptr<int16_t>(r);
+        float* depthRow = depthMap.ptr<float>(r);
+
+        for (int c = 0; c < disparity16S.cols; ++c) {
+            int16_t rawDisp = dispRow[c];
+
+            // Filter out invalid disparities (OpenCV sets bad pixels to <= 0 or tiny values)
+            if (rawDisp <= 0) {
+                depthRow[c] = 0.0f; // 0.0 means unknown/infinite depth
+                continue;
+            }
+
+            // Depth calculation: (f * B) / (rawDisp / 16.0) -> (f * B * 16) / rawDisp
+            depthRow[c] = fB16 / static_cast<float>(rawDisp);
+        }
+    }
+
+    cv::Mat depthMapNorm(mSide, mSide, CV_32FC1);
+    cv::normalize(depthMap, depthMapNorm, 0.0f, 1.0f, cv::NORM_MINMAX, CV_32FC1);
+
+    const float* ptrDepth = depthMapNorm.ptr<float>(0);
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            float val = (*ptrDepth++) * 255.0f;
+            mDepthImage.setPixelColor(x, y, QColor(val, val, val));
+        }
+    }
+
 }
+

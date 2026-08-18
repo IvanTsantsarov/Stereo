@@ -72,6 +72,7 @@ void MainWindow::finished()
     ui->progressBar->setValue(ui->progressBar->maximum());
 
     setBtnImage(ui->btnDisparity, mStereo->disparityImage());
+    setBtnImage(ui->btnDepth, mStereo->depthImage());
 
     ui->btnProcess->setText("Ready!");
 }

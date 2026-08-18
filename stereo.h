@@ -11,18 +11,21 @@ class Stereo
 {
     FloatVector mLeft, mRight; // normalized floating point intesity
     FloatVector mLeftDisp, mRightDisp, mDepth;
+    QImage mLeftImage, mRightImage, mDisparityImage, mDepthImage;
+
     uint mSide = 0;
     uint mPixelsCount = 0;
     int mDisparitySize = 0;
     float mDepthK = 0.0f;
-    QImage mLeftImage, mRightImage, mDisparityImage, mDepthImage;
+
     inline float leftValue(int x, int y){ return mLeft[x + y*mSide];}
     inline float rightValue(int x, int y){ return mRight[x + y*mSide];}
 
     static bool isPowerOfTwo(uint value);
 
 
-    QImage cvDisparity();
+    void cvDisparityDepth(float focalLengthPx, float baselineMeters);
+
 
     bool mIsAborting = false;
 public:
