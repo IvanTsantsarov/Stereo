@@ -8,13 +8,7 @@
 #define ERR qCritical() << __FILE__ << __FUNCTION__ << ":"
 #define INF qInfo() << __FILE__ << __FUNCTION__ << ":"
 #define RGB2VAL(__rgb__) (__rgb__.red()*0.2989f +  __rgb__.green()*0.5870f + __rgb__.blue()*0.1140f )
-#define RGBA2VAL(__rgba__) (( __rgba__.red()*0.2989f +  __rgba__.green()*0.5870f + __rgba__.blue()*0.1140f) * __rgba__.alpha() * 1.0f/255.0f)
-#define RGB2VAL_NORM(__rgb__) std::clamp( RGB2VAL(__rgb__) * 1.0f/255.0f, 0.0f, 1.0f)
-#define RGBA2VAL_NORM(__rgba__) std::clamp( RGBA2VAL(__rgba__) * 1.0f/255.0f, 0.0f, 1.0f)
-
 #define COLOR_BACK qRgb(255, 0, 255)
-
-
 
 
 Stereo::Stereo() {
@@ -25,7 +19,8 @@ Stereo::Stereo() {
 // Loading double (left and right eye) images from a single image
 bool Stereo::loadImages(const QString &path, bool isSwap)
 {
-    INF << "Loading double (left & right) images. Single image must be squared, with side power of 2" << path << "...";
+    INF << "Loading double (left & right) images from:" << path << "...";
+    INF << (isSwap ? " Swap left and right" : "");
 
     QImage img(path);
     if( img.isNull() ) {
@@ -71,8 +66,6 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
     // mLeftImage.fill(QColor(255, 0, 0));
     // mRightImage.fill(QColor(0, 255, 0));
 
-    bool hasAlpha = img.hasAlphaChannel();
-
     int offsetLeft = isSwap ? mSide : 0;
     int offsetRight = isSwap ? 0 : mSide;
 
@@ -85,13 +78,8 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
             mRightImage.setPixelColor(x, y, pixelRight);
 
             // Calculate intensity from the color and normalize it [0..1]
-            if( hasAlpha ) {
-                mLeft.append( RGBA2VAL(pixelLeft) );
-                mRight.append( RGBA2VAL(pixelRight) );
-            }else {
-                mLeft.append( RGB2VAL(pixelLeft) );
-                mRight.append( RGB2VAL(pixelRight) );
-            }
+            mLeft.append( RGB2VAL(pixelLeft) );
+            mRight.append( RGB2VAL(pixelRight) );
         }
     }
 
@@ -216,18 +204,12 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
 
     mDisparityImage.fill(COLOR_BACK);
 
-    float maxDisparity = 0.0f;
+    double minResultD, maxResultD;
+    cv::minMaxLoc(disparity32F, &minResultD, &maxResultD);
+    qDebug() << "Min&Max result disp:" << minResultD<< maxResultD;
 
-    for( int y = 0; y < mSide; y ++) {
-        for( int x = 0; x < mSide; x ++) {
-            float d = disparity32F.at<float>(y, x);
-            if( d > maxDisparity) {
-                maxDisparity = d;
-            }
-        }
-    }
 
-    float minD = 0;
+    // Create disparity image
     for( int y = 0; y < mSide; y ++) {
         for( int x = 0; x < mSide; x ++) {
             uint8_t c = disparity8U.at<uint8_t>(y, x);
@@ -235,7 +217,7 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
         }
     }
 
-    qDebug() << "Min disparity:" << minD;
+
 
     // Create an empty floating-point matrix for the depth map (CV_32F)
     cv::Mat depthMap = cv::Mat::zeros(disparity16S.size(), CV_32FC1);
@@ -272,6 +254,9 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
             depthRow[c] = d;
         }
     }
+
+    qDebug() << "Min&Max depth:" << depthMin << depthMax;
+    qDebug() << "fB:" << fB16;
 
     float depthDeltaInv = 255.0f / (depthMax - depthMin);
 
