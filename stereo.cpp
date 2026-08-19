@@ -111,7 +111,7 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
 }
 
 
- void Stereo::process(bool isOpenCV)
+ void Stereo::process(bool isOpenCV, float focalL, float sensorW, float distanceEyes)
 {
     mIsAborting = false;
     mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, 0.0f);
@@ -120,7 +120,7 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
 
         // Use OpenCV disparity
         // on Blender 51mm cam standart params
-        cvDisparityDepth( 51, 36, 0.065f);
+        cvDisparityDepth( focalL, sensorW, distanceEyes);
     }
     else {
         // To be implmented with own disparity
@@ -217,8 +217,6 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
         }
     }
 
-
-
     // Create an empty floating-point matrix for the depth map (CV_32F)
     cv::Mat depthMap = cv::Mat::zeros(disparity16S.size(), CV_32FC1);
 
@@ -229,17 +227,13 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
     float depthMin = std::numeric_limits<float>::max();
     float depthMax = 0.0f;
 
-    for (int r = 0; r < disparity16S.rows; ++r) {
-        // Direct pointer access for performance
-        const int16_t* dispRow = disparity16S.ptr<int16_t>(r);
-        float* depthRow = depthMap.ptr<float>(r);
-
-        for (int c = 0; c < disparity16S.cols; ++c) {
-            int16_t rawDisp = dispRow[c];
+    for (int y = 0; y < mSide; ++y) {
+        for (int x = 0; x < mSide; ++x) {
+            int16_t rawDisp = disparity16S.at<int16_t>(y, x);
 
             // Filter out invalid disparities (OpenCV sets bad pixels to <= 0 or tiny values)
             if (rawDisp <= 0) {
-                depthRow[c] = 0.0f; // 0.0 means unknown/infinite depth
+                depthMap.at<float>(y, x) = 0.0f; // 0.0 means unknown/infinite depth
                 continue;
             }
 
@@ -251,12 +245,15 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
             if( depthMin > d) {
                 depthMin = d;
             }
-            depthRow[c] = d;
+
+            depthMap.at<float>(y, x) = d;
         }
     }
 
     qDebug() << "Min&Max depth:" << depthMin << depthMax;
     qDebug() << "fB:" << fB16;
+
+    depthMax = 20;// trash f*ck it yeah
 
     float depthDeltaInv = 255.0f / (depthMax - depthMin);
 
@@ -264,12 +261,14 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
 
     for( int y = 0; y < mSide; y ++) {
         for( int x = 0; x < mSide; x ++) {
-            float d = (depthMap.at<float>(y, x) - depthMin) * depthDeltaInv;
+            float depth = depthMap.at<float>(y, x);
+            float depthNorm = (depth - depthMin) * depthDeltaInv;
 
-            if( d < 0.0f ) {
-                d = -d;//continue;
+            if( depthNorm < 0.0f ) {
+                continue;
             }
-            uint8_t c = std::clamp( d, 0.0f, 255.0f);
+
+            uint8_t c = std::clamp( depthNorm, 0.0f, 255.0f);
             QColor col = QColor(c, c, c);
             mDepthImage.setPixelColor( x, y, col );
         }

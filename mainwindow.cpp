@@ -50,7 +50,10 @@ void MainWindow::process()
 {
     ui->btnProcess->setText("Processing...");
     QCoreApplication::processEvents();
-    mStereo->process(ui->checkOpenCV->isChecked());
+    mStereo->process(ui->checkOpenCV->isChecked(),
+                     ui->doubleFocalLenght->value(),
+                     ui->doubleSensorSize->value(),
+                     ui->doubleEyeDistance->value());
 }
 
 void MainWindow::setProgressSteps(uint steps)

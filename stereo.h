@@ -45,7 +45,7 @@ public:
     const QImage& depthImage(){ return mDepthImage; }
     const QImage& anaglyphImage() { return mAnaglyphImage; }
 
-    void process(bool isOpenCV);
+    void process(bool isOpenCV, float focalL, float sensorW, float distanceEyes);
     void abort(){ mIsAborting = true; }
 private:
     Stage mStage = Initial;

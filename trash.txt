@@ -206,3 +206,31 @@ void Stereo::process(bool isOpenCV)
 
 
 ///////////////////////////////////////////////////////////////////////////
+
+
+
+for (int r = 0; r < disparity16S.rows; ++r) {
+    // Direct pointer access for performance
+    const int16_t* dispRow = disparity16S.ptr<int16_t>(r);
+    float* depthRow = depthMap.ptr<float>(r);
+
+    for (int c = 0; c < disparity16S.cols; ++c) {
+        int16_t rawDisp = dispRow[c];
+
+        // Filter out invalid disparities (OpenCV sets bad pixels to <= 0 or tiny values)
+        if (rawDisp <= 0) {
+            depthRow[c] = 0.0f; // 0.0 means unknown/infinite depth
+            continue;
+        }
+
+        // Depth calculation: (f * B) / (rawDisp / 16.0) -> (f * B * 16) / rawDisp
+        float d = fB16 / static_cast<float>(rawDisp);
+        if( depthMax < d ) {
+            depthMax = d;
+        }
+        if( depthMin > d) {
+            depthMin = d;
+        }
+        depthRow[c] = d;
+    }
+}
