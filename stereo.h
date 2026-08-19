@@ -11,7 +11,7 @@ class Stereo
 {
     FloatVector mLeft, mRight; // normalized floating point intesity
     FloatVector mLeftDisp, mRightDisp, mDepth;
-    QImage mLeftImage, mRightImage, mDisparityImage, mDepthImage;
+    QImage mLeftImage, mRightImage, mDisparityImage, mAnaglyphImage, mDepthImage;
 
     uint mSide = 0;
     uint mPixelsCount = 0;
@@ -21,10 +21,9 @@ class Stereo
     inline float leftValue(int x, int y){ return mLeft[x + y*mSide];}
     inline float rightValue(int x, int y){ return mRight[x + y*mSide];}
 
-    static bool isPowerOfTwo(uint value);
+    static bool isPowerOfTwo(uint value) { return value != 0 && (value & (value - 1)) == 0; }
 
-
-    void cvDisparityDepth(float focalLengthPx, float baselineMeters);
+    void cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float distanceBetweenEyesM);
 
 
     bool mIsAborting = false;
@@ -39,12 +38,12 @@ public:
     };
 
     Stereo();
-    bool loadImages(const QString& path);
+    bool loadImages(const QString& path, bool isSwap);
     const QImage& leftImage(){ return mLeftImage; }
     const QImage& rightImage(){ return mRightImage; }
     const QImage& disparityImage(){ return mDisparityImage; }
     const QImage& depthImage(){ return mDepthImage; }
-    QImage anaglyphImage();
+    const QImage& anaglyphImage() { return mAnaglyphImage; }
 
     void process(bool isOpenCV);
     void abort(){ mIsAborting = true; }

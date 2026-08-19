@@ -20,6 +20,8 @@ void myMessageHandler(QtMsgType type, const QMessageLogContext & context, const 
         case QtMsgType::QtFatalMsg: gMainWindow->onError(txt);; gMainWindow->close(); break;
         case QtMsgType::QtCriticalMsg: gMainWindow->onError(txt); break;
         case QtMsgType::QtInfoMsg: gMainWindow->onError(txt); break;
+        default:
+            break;
     }
 
         if( gOriginalHandler)
@@ -28,15 +30,17 @@ void myMessageHandler(QtMsgType type, const QMessageLogContext & context, const 
 
 void MainWindow::setBtnImage(QPushButton *btn, const QImage &img)
 {
+    int btnMaxSize = std::max(btn->width(), btn->height());
+    QSize btnSize(btnMaxSize, btnMaxSize);
     QPalette p = btn->palette();
-    p.setBrush(btn->backgroundRole(), QBrush(img.scaled(BTN_SIDE, BTN_SIDE)));
+    p.setBrush(btn->backgroundRole(), QBrush(img.scaled(btnSize)));
     btn->setPalette(p);
     btn->setFlat(true);
     btn->setAutoFillBackground(true);
     btn->update();
 
-    btn->setMinimumSize(BTN_SIZE);
-    btn->setMaximumSize(BTN_SIZE);
+    //btn->setMinimumSize(btnSize);
+    //btn->setMaximumSize(btnSize);
     if( btn->toolTip().isEmpty() )
         btn->setToolTip(btn->text());
     btn->setText("");
@@ -94,7 +98,7 @@ void MainWindow::loadImages()
 
     mStereo = new Stereo;
 
-    if( !mStereo->loadImages(selected)) {
+    if( !mStereo->loadImages(selected, ui->checkSwap->isChecked())) {
         QMessageBox::critical(this, "Error opening image", mLastError );
         return;
     }
@@ -102,7 +106,6 @@ void MainWindow::loadImages()
     MainWindow::setBtnImage(ui->btnLeft, mStereo->leftImage());
     MainWindow::setBtnImage(ui->btnRight, mStereo->rightImage());
     MainWindow::setBtnImage(ui->btnAnaglypth, mStereo->anaglyphImage());
-
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -166,5 +169,28 @@ void MainWindow::on_btnProcess_clicked()
         ui->btnProcess->setText("Aborting...");
         QCoreApplication::processEvents();
     }
+}
+
+
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    if( !mStereo) {
+        return;
+    }
+
+    auto applyImage = [&](QPushButton* btn, const QImage& img) {
+        if( img.isNull() ) {
+            return;
+        }
+
+        setBtnImage(btn, img);
+    };
+
+    applyImage(ui->btnLeft, mStereo->leftImage());
+    applyImage(ui->btnRight, mStereo->rightImage());
+    applyImage(ui->btnAnaglypth, mStereo->anaglyphImage());
+    applyImage(ui->btnDisparity, mStereo->disparityImage());
+    applyImage(ui->btnDepth, mStereo->depthImage());
 }
 

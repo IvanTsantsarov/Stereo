@@ -41,6 +41,10 @@ private slots:
 
     void on_btnProcess_clicked();
 
+
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 private:
     Ui::MainWindow *ui;
 };

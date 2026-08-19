@@ -1,52 +1,20 @@
 #include "stereo.h"
 #include "mainwindow.h"
 #include <QDebug>
-#include <algorithm>
-#include <vector>
-
-
-// /        STENCIL_SIZE       \
-//(--------------X--------------)
-// \STENCIL_SIDE/|\STENCIL_SIDE/
-//               |
-//         current value
-#define STENCIL_SIDE 6
-#define STENCIL_SIZE (STENCIL_SIDE*2 + 1)
 
 #define DISPARITY_PART 0.1f
-
-#define MIN_DIFF 0.0001f
-#define INVALID_DIST 10e6
-#define MAX_DIST_CMP 10e5
+#define MAX_FLOAT 1e16
 
 #define ERR qCritical() << __FILE__ << __FUNCTION__ << ":"
 #define INF qInfo() << __FILE__ << __FUNCTION__ << ":"
-#define RGB2VAL(__rgb__) ( __rgb__.red()*0.2989f +  __rgb__.green()*0.5870f + __rgb__.blue()*0.1140f )
+#define RGB2VAL(__rgb__) (__rgb__.red()*0.2989f +  __rgb__.green()*0.5870f + __rgb__.blue()*0.1140f )
 #define RGBA2VAL(__rgba__) (( __rgba__.red()*0.2989f +  __rgba__.green()*0.5870f + __rgba__.blue()*0.1140f) * __rgba__.alpha() * 1.0f/255.0f)
-#define RGB2VAL_NORM(__rgb__)(RGB2VAL(__rgb__) * 1.0f/255.0f)
-#define RGBA2VAL_NORM(__rgba__)(RGBA2VAL(__rgba__) * 1.0f/255.0f)
-
-#define MAX_FLOAT 1e8f
+#define RGB2VAL_NORM(__rgb__) std::clamp( RGB2VAL(__rgb__) * 1.0f/255.0f, 0.0f, 1.0f)
+#define RGBA2VAL_NORM(__rgba__) std::clamp( RGBA2VAL(__rgba__) * 1.0f/255.0f, 0.0f, 1.0f)
 
 #define COLOR_BACK qRgb(255, 0, 255)
 
-bool Stereo::isPowerOfTwo(uint value)
-{
-    uint bitCount = 0;
-    uint valueTemp = value;
 
-    while(valueTemp) {
-        valueTemp >>= 1;
-        bitCount++;
-    }
-
-    if( !bitCount ) {
-        return false;
-    }
-
-    uint mask = 1 << (bitCount-1);
-    return value & mask;
-}
 
 
 Stereo::Stereo() {
@@ -55,7 +23,7 @@ Stereo::Stereo() {
 }
 
 // Loading double (left and right eye) images from a single image
-bool Stereo::loadImages(const QString &path)
+bool Stereo::loadImages(const QString &path, bool isSwap)
 {
     INF << "Loading double (left & right) images. Single image must be squared, with side power of 2" << path << "...";
 
@@ -79,20 +47,25 @@ bool Stereo::loadImages(const QString &path)
         return false;
     }
 
+    /*
     if( !isPowerOfTwo(mSide) ) {
         ERR << "Single image side is not power of two (^2)";
         return false;
     }
+    */
 
     mPixelsCount = mSide * mSide;
     mDisparitySize = DISPARITY_PART * mSide;
 
+    mLeft.clear();
+    mRight.clear();
     mLeft.reserve(mPixelsCount);
     mRight.reserve(mPixelsCount);
 
     mLeftImage = QImage(mSide, mSide, img.format());
     mRightImage = QImage(mSide, mSide, img.format());
     mDepthImage = QImage(mSide, mSide, img.format());
+    mAnaglyphImage = QImage(mSide, mSide, img.format());
     mDisparityImage = QImage(mSide, mSide, img.format());
 
     // mLeftImage.fill(QColor(255, 0, 0));
@@ -100,21 +73,42 @@ bool Stereo::loadImages(const QString &path)
 
     bool hasAlpha = img.hasAlphaChannel();
 
+    int offsetLeft = isSwap ? mSide : 0;
+    int offsetRight = isSwap ? 0 : mSide;
+
     for( uint y = 0; y < mSide; y ++) {
         for( uint x = 0; x < mSide; x ++) {
-            QColor pixelLeft = img.pixelColor(x, y);
-            QColor pixelRight = img.pixelColor(x + mSide, y);
+            QColor pixelLeft = img.pixelColor(x + offsetLeft, y);
+            QColor pixelRight = img.pixelColor(x + offsetRight, y);
 
             mLeftImage.setPixelColor(x, y, pixelLeft);
             mRightImage.setPixelColor(x, y, pixelRight);
 
+            // Calculate intensity from the color and normalize it [0..1]
             if( hasAlpha ) {
-                mLeft.append( RGBA2VAL_NORM(pixelLeft) );
-                mRight.append( RGBA2VAL_NORM(pixelRight) );
+                mLeft.append( RGBA2VAL(pixelLeft) );
+                mRight.append( RGBA2VAL(pixelRight) );
             }else {
-                mLeft.append( RGB2VAL_NORM(pixelLeft) );
-                mRight.append( RGB2VAL_NORM(pixelRight) );
+                mLeft.append( RGB2VAL(pixelLeft) );
+                mRight.append( RGB2VAL(pixelRight) );
             }
+        }
+    }
+
+    // Combines both left&right intensity images into single Anaglyph image
+    // (to verify that images are properly loaded)
+    for( uint y = 0; y < mSide; y ++) {
+        int offset = y * mSide;
+        for( uint x = 0; x < mSide; x ++) {
+            int index = offset + x;
+            float lval = mLeft[index];
+            float rval = mRight[index];
+            float average = (rval+lval) * 0.5f;
+
+            // RED image part is from the LEFT image
+            // BLUE image part is from the RIGHT image
+            QColor pixel = QColor(lval, average, rval);
+            mAnaglyphImage.setPixelColor(x, y, pixel);
         }
     }
 
@@ -128,40 +122,17 @@ bool Stereo::loadImages(const QString &path)
     return true;
 }
 
-// Combines both left&right image into single Anaglyph image
-QImage Stereo::anaglyphImage()
-{
-    QImage result(mSide, mSide, mLeftImage.format());
 
-    for( uint y = 0; y < mSide; y ++) {
-        int offset = y * mSide;
-        for( uint x = 0; x < mSide; x ++) {
-            int index = offset + x;
-            float lval = mLeft[index] * 255;
-            float rval = mRight[index]  * 255;
-            float average = (rval+lval) * 0.5f;
-            QColor pixel = QColor(lval, average, rval);
-            result.setPixelColor(x, y, pixel);
-        }
-    }
-    return result;
-}
-
-
-void Stereo::process(bool isOpenCV)
+ void Stereo::process(bool isOpenCV)
 {
     mIsAborting = false;
-    mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, INVALID_DIST);
-
-    mDepth.fill(INVALID_DIST);
-    mLeftDisp.fill(INVALID_DIST);
-    mRightDisp.fill(INVALID_DIST);
+    mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, 0.0f);
 
     if( isOpenCV ) {
 
         // Use OpenCV disparity
         // on Blender 51mm cam standart params
-        cvDisparityDepth(0.0051f, 0.065f);
+        cvDisparityDepth( 51, 36, 0.065f);
     }
     else {
         // To be implmented with own disparity
@@ -185,23 +156,33 @@ void Stereo::process(bool isOpenCV)
 }
 
 
-// Computes the disparity map from rectified left and right cv::Mat images
-void Stereo::cvDisparityDepth(float focalLengthPx, float baselineMeters) {
+// Obtain disparity map and depth map with OpenCV
+void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float distanceBetweenEyesM ) {
 
     cv::Mat left32(mSide, mSide, CV_32FC1, mLeft.data());
     cv::Mat right32(mSide, mSide, CV_32FC1, mRight.data());
 
-    cv::Mat left, right;
-    left32.convertTo(left, CV_8U, 255.0);
-    right32.convertTo(right, CV_8U, 255.0);
+    double minL, maxL;
+    double minR, maxR;
 
+    cv::minMaxLoc(left32, &minL, &maxL);
+    cv::minMaxLoc(right32, &minR, &maxR);
+
+    qDebug() << "Left intensity:" << minL << maxL;
+    qDebug() << "Right intensity:" << minR << maxR;
+
+    cv::Mat left, right;
+    left32.convertTo(left, CV_8U);
+    right32.convertTo(right, CV_8U);
+
+    qDebug() << "OpenCV disparity & depth";
     qDebug() << "Left:" << left.size().width <<"x" << left.size().height <<"x" << left.depth() <<"|"<< left.type();
     qDebug() << "Right:" << right.size().width <<"x" << right.size().height <<"x" << right.depth() <<"|"<< right.type();
 
     // Configure StereoSGBM parameters
     int minDisparity = 0;
     int numDisparities = 64; // Must be divisible by 16
-    int blockSize = 1;       // Must be an odd number >= 1
+    int blockSize = 3;       // Must be an odd number >= 1
 
     cv::Ptr<cv::StereoSGBM> sgbm = cv::StereoSGBM::create(
         minDisparity,
@@ -210,6 +191,8 @@ void Stereo::cvDisparityDepth(float focalLengthPx, float baselineMeters) {
         );
 
     // Set additional SGBM parameters for smoother maps
+    // (AI generated)
+
     sgbm->setP1(8 * left.channels() * blockSize * blockSize);
     sgbm->setP2(32 * left.channels() * blockSize * blockSize);
     sgbm->setDisp12MaxDiff(1);
@@ -219,6 +202,7 @@ void Stereo::cvDisparityDepth(float focalLengthPx, float baselineMeters) {
     sgbm->setSpeckleRange(32);
     sgbm->setMode(cv::StereoSGBM::MODE_SGBM);
 
+
     // Compute disparity (Output is CV_16S / 16-bit signed integer)
     cv::Mat disparity16S;
     sgbm->compute(left, right, disparity16S);
@@ -227,21 +211,41 @@ void Stereo::cvDisparityDepth(float focalLengthPx, float baselineMeters) {
     cv::Mat disparity8U;
     cv::normalize(disparity16S, disparity8U, 0, 255, cv::NORM_MINMAX, CV_8UC1);
 
-    int index = 0;
+    cv::Mat disparity32F;
+    disparity16S.convertTo(disparity32F, CV_32F, 1.0 / 16.0);
+
+    mDisparityImage.fill(COLOR_BACK);
+
+    float maxDisparity = 0.0f;
+
     for( int y = 0; y < mSide; y ++) {
         for( int x = 0; x < mSide; x ++) {
-            uint8_t v = disparity8U.at<uint8_t>(index);
-            mDisparityImage.setPixelColor(x, y, QColor(v, v, v));
-            index ++;
+            float d = disparity32F.at<float>(y, x);
+            if( d > maxDisparity) {
+                maxDisparity = d;
+            }
         }
     }
 
+    float minD = 0;
+    for( int y = 0; y < mSide; y ++) {
+        for( int x = 0; x < mSide; x ++) {
+            uint8_t c = disparity8U.at<uint8_t>(y, x);
+            mDisparityImage.setPixelColor(x, y, QColor(c, c, c));
+        }
+    }
+
+    qDebug() << "Min disparity:" << minD;
 
     // Create an empty floating-point matrix for the depth map (CV_32F)
     cv::Mat depthMap = cv::Mat::zeros(disparity16S.size(), CV_32FC1);
 
     // Constant scaling factor: f * B * 16 (since raw disparity is multiplied by 16)
-    float fB16 = focalLengthPx * baselineMeters * 16.0;
+    float focalLengthPx = focalLengthMM / sensorSizeMM * mSide;
+    float fB16 = focalLengthPx * distanceBetweenEyesM * 16.0;
+
+    float depthMin = std::numeric_limits<float>::max();
+    float depthMax = 0.0f;
 
     for (int r = 0; r < disparity16S.rows; ++r) {
         // Direct pointer access for performance
@@ -258,20 +262,32 @@ void Stereo::cvDisparityDepth(float focalLengthPx, float baselineMeters) {
             }
 
             // Depth calculation: (f * B) / (rawDisp / 16.0) -> (f * B * 16) / rawDisp
-            depthRow[c] = fB16 / static_cast<float>(rawDisp);
+            float d = fB16 / static_cast<float>(rawDisp);
+            if( depthMax < d ) {
+                depthMax = d;
+            }
+            if( depthMin > d) {
+                depthMin = d;
+            }
+            depthRow[c] = d;
         }
     }
 
-    cv::Mat depthMapNorm(mSide, mSide, CV_32FC1);
-    cv::normalize(depthMap, depthMapNorm, 0.0f, 1.0f, cv::NORM_MINMAX, CV_32FC1);
+    float depthDeltaInv = 255.0f / (depthMax - depthMin);
 
-    const float* ptrDepth = depthMapNorm.ptr<float>(0);
+    mDepthImage.fill(COLOR_BACK);
+
     for( int y = 0; y < mSide; y ++) {
         for( int x = 0; x < mSide; x ++) {
-            float val = (*ptrDepth++) * 255.0f;
-            mDepthImage.setPixelColor(x, y, QColor(val, val, val));
+            float d = (depthMap.at<float>(y, x) - depthMin) * depthDeltaInv;
+
+            if( d < 0.0f ) {
+                d = -d;//continue;
+            }
+            uint8_t c = std::clamp( d, 0.0f, 255.0f);
+            QColor col = QColor(c, c, c);
+            mDepthImage.setPixelColor( x, y, col );
         }
     }
-
 }
 

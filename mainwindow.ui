@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>391</width>
-    <height>264</height>
+    <width>621</width>
+    <height>476</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -84,18 +84,8 @@
       </item>
      </layout>
     </item>
-    <item row="1" column="0">
+    <item row="2" column="0">
      <layout class="QHBoxLayout" name="horizontalLayout">
-      <item>
-       <widget class="QCheckBox" name="checkOpenCV">
-        <property name="text">
-         <string>OpenCV</string>
-        </property>
-        <property name="checked">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
       <item>
        <widget class="QProgressBar" name="progressBar">
         <property name="value">
@@ -112,6 +102,33 @@
       </item>
      </layout>
     </item>
+    <item row="1" column="0">
+     <layout class="QHBoxLayout" name="horizontalLayout_2">
+      <item>
+       <widget class="QCheckBox" name="checkOpenCV">
+        <property name="toolTip">
+         <string>Use OpenCV functions to obtain disparity</string>
+        </property>
+        <property name="text">
+         <string>OpenCV</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="checkSwap">
+        <property name="toolTip">
+         <string>Swap left and  right images while loading (check it before loading)</string>
+        </property>
+        <property name="text">
+         <string>Swap images</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
    </layout>
   </widget>
   <widget class="QMenuBar" name="menubar">
@@ -119,8 +136,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>391</width>
-     <height>18</height>
+     <width>621</width>
+     <height>26</height>
     </rect>
    </property>
   </widget>
