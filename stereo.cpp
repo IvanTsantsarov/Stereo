@@ -111,7 +111,6 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
                      int maxDisparity)
 {
     mIsAborting = false;
-    mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, 0.0f);
 
     if( isOpenCV ) {
 
@@ -141,8 +140,9 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
     mStage = Stage::Ready;
 }
 
-
-// Obtain disparity map and depth map with OpenCV
+//////////////////////////////////////////////////////////////////////////////////////////
+// Obtain disparity map with OpenCV and calculate manualy the depth map
+//////////////////////////////////////////////////////////////////////////////////////////
 void Stereo::cvDisparityDepth(float focalLengthMM,
                               float sensorSizeMM,
                               float distanceBetweenEyesM,
@@ -179,8 +179,8 @@ void Stereo::cvDisparityDepth(float focalLengthMM,
         blockSize
         );
 
-    // Set additional SGBM parameters for smoother maps
-    // (AI generated)
+    // Set additional SGBM (AI generated) parameters for smoother maps
+    // Can be commented, they are not essential
     sgbm->setP1(8 * left.channels() * blockSize * blockSize);
     sgbm->setP2(32 * left.channels() * blockSize * blockSize);
     sgbm->setDisp12MaxDiff(1);
@@ -195,7 +195,7 @@ void Stereo::cvDisparityDepth(float focalLengthMM,
     cv::Mat disparity16S;
     sgbm->compute(left, right, disparity16S);
 
-    // Normalize and convert to 8-bit unsigned integer (CV_8U) for visual representation
+    // Normalize and convert to 8-bit unsigned integer (CV_8U) for the GUI
     cv::Mat disparity8U;
     cv::normalize(disparity16S, disparity8U, 0, 255, cv::NORM_MINMAX, CV_8UC1);
 
@@ -280,11 +280,20 @@ void Stereo::cvDisparityDepth(float focalLengthMM,
     }
 }
 
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// My disparity map and depth calculalations
+//////////////////////////////////////////////////////////////////////////////////////////
 void Stereo::myDisparityDepth(float focalLengthMM,
                               float sensorSizeMM,
                               float distanceBetweenEyesM,
                               uint maxDisparity)
 {
+    gMainWindow->setProgressSteps(4 * mSide);
+
+    quint16 P1 = 2;
+    quint16 P2 = 10;
+
     float focalLengthPx = focalLengthMM / sensorSizeMM * mSide;
     float fB = focalLengthPx * distanceBetweenEyesM;
 
@@ -298,12 +307,7 @@ void Stereo::myDisparityDepth(float focalLengthMM,
     }
 
     // Allocate cost volume
-    QVector<QVector<quint8>> costVol;
-
-    costVol.resize(mPixelsCount);
-    for( auto i = 0; i < mPixelsCount; i ++) {
-        costVol[i].resize(maxDisparity);
-    }
+    QVector<QVector<quint8>> costVol(mPixelsCount, QVector<quint8>(maxDisparity, 0));
 
     auto getPixelIndex = [&](bool isRight, int index) {
         return isRight ? right[index] : left[index];
@@ -364,6 +368,141 @@ void Stereo::myDisparityDepth(float focalLengthMM,
         }
     }
 
+    // Allocate path aggregation array
+    QVector<QVector<quint16>> aggregatedCost(mPixelsCount, QVector<quint16>(maxDisparity, 0));
+
+    auto setBounds = [&](int dir, int& start, int& end) {
+        if( dir > 0 ) {
+            start = 0; end = mSide;
+        }else {
+            start = mSide-1; end = -1;
+        }
+    };
+
+    auto aggregate = [&](bool isHorizontal, int dir)
+    {
+        constexpr quint16 P1 = 10;
+        constexpr quint16 P2 = 50;
+
+        QVector<quint32> prevCost(maxDisparity);
+        QVector<quint32> currCost(maxDisparity);
+
+        int primStart, primEnd;
+        int secStart, secEnd;
+
+        setBounds(dir, primStart, primEnd);
+        setBounds(1, secStart, secEnd);
+
+        for( int sec = secStart; sec != secEnd; sec++ )
+        {
+            const int x = isHorizontal ? primStart : sec;
+            const int y = isHorizontal ? sec : primStart;
+
+            int pixelIndex = y * mSide + x;
+
+            // First pixel
+            for (int d = 0; d < maxDisparity; ++d)
+            {
+                prevCost[d] = costVol[pixelIndex][d];
+                aggregatedCost[pixelIndex][d] += prevCost[d];
+            }
+
+            for (int prim = primStart + dir; prim != primEnd; prim += dir) {
+                const int x = isHorizontal ? prim : sec;
+                const int y = isHorizontal ? sec : prim;
+                int pixelIndex = y * mSide + x;
+
+                quint32 minPrev = prevCost[0];
+                for( quint16 val:prevCost) {
+                    if( val < minPrev ) {
+                        minPrev = val;
+                    }
+                }
+
+                for( int d = 0; d < maxDisparity; d++ ) {
+                    quint32 best = prevCost[d];
+
+                    if (d > 0) {
+                        best = std::min( best, prevCost[d - 1] + P1 );
+                    }
+
+                    if ((d + 1) < maxDisparity){
+                        best = std::min( best, prevCost[d + 1] + P1 );
+                    }
+
+                    best = std::min(best, minPrev + P2);
+
+                    quint32 value = static_cast<quint32>(costVol[pixelIndex][d]) + best - minPrev;
+
+                    currCost[d] = std::min( value, std::numeric_limits<quint32>::max() );
+
+                    aggregatedCost[pixelIndex][d] += currCost[d];
+                }
+
+                std::swap(prevCost, currCost);
+            }
+
+            gMainWindow->stepProgress();
+        }
+    };
+
+
+    // Left 2 Right
+    aggregate(true,  1);
+
+    // Right 2 Left
+    aggregate(true, -1);
+
+    // Top 2 Down
+    aggregate(false, 1);
+
+    // Down to Top
+    aggregate(false, -1);
+
+
+    QVector<float> disparity(mPixelsCount, 0.0f);
+    int minDisp = std::numeric_limits<quint16>::max();
+    int maxDisp = -minDisp;
+
+    // Winner takes all
+    for (int y = 0; y < mSide; ++y) {
+        for (int x = 0; x < mSide; ++x) {
+            int pixelIndex = y * mSide + x;
+
+            quint16 bestCost = std::numeric_limits<quint16>::max();
+            int bestDisp = 0;
+
+            for (int d = 0; d < maxDisparity; ++d)
+            {
+                quint16 cost = aggregatedCost[pixelIndex][d];
+                if (cost < bestCost)
+                {
+                    bestCost = cost;
+                    bestDisp = d;
+                }
+            }
+
+            if( bestDisp < minDisp) {
+                minDisp = bestDisp;
+            }
+
+            if( bestDisp > maxDisp) {
+                maxDisp = bestDisp;
+            }
+
+            disparity[pixelIndex] = static_cast<float>(bestDisp);
+        }
+    }
+
+    float k = 255.0f / (maxDisp - minDisp);
+    int pixelIndex = 0;
+    for( auto y = 0; y < mSide; y ++) {
+        for( auto x = 0; x < mSide; x ++) {
+            quint8 c = (disparity[pixelIndex++] - minDisp) * k;
+            QColor col(c, c, c);
+            mDisparityImage.setPixelColor(x, y, col);
+        }
+    }
 
 }
 

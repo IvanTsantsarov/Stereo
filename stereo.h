@@ -10,7 +10,6 @@ typedef QVector<float> FloatVector;
 class Stereo
 {
     FloatVector mLeft, mRight; // normalized floating point intesity
-    FloatVector mLeftDisp, mRightDisp, mDepth;
     QImage mLeftImage, mRightImage, mDisparityImage, mAnaglyphImage, mDepthImage;
 
     uint mSide = 0;
