@@ -112,6 +112,9 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
 {
     mIsAborting = false;
 
+    mDisparityImage.fill(COLOR_BACK);
+    mDepthImage.fill(COLOR_BACK);
+
     if( isOpenCV ) {
 
         // Use OpenCV disparity
@@ -291,8 +294,8 @@ void Stereo::myDisparityDepth(float focalLengthMM,
 {
     gMainWindow->setProgressSteps(4 * mSide);
 
-    quint16 P1 = 2;
-    quint16 P2 = 10;
+    quint16 P1 = 10;
+    quint16 P2 = 50;
 
     float focalLengthPx = focalLengthMM / sensorSizeMM * mSide;
     float fB = focalLengthPx * distanceBetweenEyesM;
@@ -369,7 +372,7 @@ void Stereo::myDisparityDepth(float focalLengthMM,
     }
 
     // Allocate path aggregation array
-    QVector<QVector<quint16>> aggregatedCost(mPixelsCount, QVector<quint16>(maxDisparity, 0));
+    QVector<QVector<quint32>> aggregatedCost(mPixelsCount, QVector<quint32>(maxDisparity, 0));
 
     auto setBounds = [&](int dir, int& start, int& end) {
         if( dir > 0 ) {
@@ -381,9 +384,6 @@ void Stereo::myDisparityDepth(float focalLengthMM,
 
     auto aggregate = [&](bool isHorizontal, int dir)
     {
-        constexpr quint16 P1 = 10;
-        constexpr quint16 P2 = 50;
-
         QVector<quint32> prevCost(maxDisparity);
         QVector<quint32> currCost(maxDisparity);
 
@@ -433,10 +433,8 @@ void Stereo::myDisparityDepth(float focalLengthMM,
                     best = std::min(best, minPrev + P2);
 
                     quint32 value = static_cast<quint32>(costVol[pixelIndex][d]) + best - minPrev;
-
-                    currCost[d] = std::min( value, std::numeric_limits<quint32>::max() );
-
-                    aggregatedCost[pixelIndex][d] += currCost[d];
+                    currCost[d] = value;
+                    aggregatedCost[pixelIndex][d] += value;
                 }
 
                 std::swap(prevCost, currCost);
@@ -469,12 +467,12 @@ void Stereo::myDisparityDepth(float focalLengthMM,
         for (int x = 0; x < mSide; ++x) {
             int pixelIndex = y * mSide + x;
 
-            quint16 bestCost = std::numeric_limits<quint16>::max();
+            quint32 bestCost = std::numeric_limits<quint32>::max();
             int bestDisp = 0;
 
             for (int d = 0; d < maxDisparity; ++d)
             {
-                quint16 cost = aggregatedCost[pixelIndex][d];
+                quint32 cost = aggregatedCost[pixelIndex][d];
                 if (cost < bestCost)
                 {
                     bestCost = cost;
@@ -494,7 +492,8 @@ void Stereo::myDisparityDepth(float focalLengthMM,
         }
     }
 
-    float k = 255.0f / (maxDisp - minDisp);
+
+    float k = minDisp == maxDisp ? 0.0f : 255.0f / (maxDisp - minDisp);
     int pixelIndex = 0;
     for( auto y = 0; y < mSide; y ++) {
         for( auto x = 0; x < mSide; x ++) {
