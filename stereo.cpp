@@ -42,13 +42,6 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
         return false;
     }
 
-    /*
-    if( !isPowerOfTwo(mSide) ) {
-        ERR << "Single image side is not power of two (^2)";
-        return false;
-    }
-    */
-
     mPixelsCount = mSide * mSide;
     mDisparitySize = DISPARITY_PART * mSide;
 
@@ -111,7 +104,11 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
 }
 
 
- void Stereo::process(bool isOpenCV, float focalL, float sensorW, float distanceEyes)
+ void Stereo::process(bool isOpenCV,
+                     float focalL,
+                     float sensorW,
+                     float distanceEyes,
+                     int maxDisparity)
 {
     mIsAborting = false;
     mDepth = mRightDisp = mLeftDisp = QVector<float>(mPixelsCount, 0.0f);
@@ -120,9 +117,10 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
 
         // Use OpenCV disparity
         // on Blender 51mm cam standart params
-        cvDisparityDepth( focalL, sensorW, distanceEyes);
+        cvDisparityDepth( focalL, sensorW, distanceEyes, maxDisparity);
     }
     else {
+        myDisparityDepth(focalL, sensorW, distanceEyes, maxDisparity);
         // To be implmented with own disparity
         mStage = Stage::ProcessingLeft;
 
@@ -145,7 +143,10 @@ bool Stereo::loadImages(const QString &path, bool isSwap)
 
 
 // Obtain disparity map and depth map with OpenCV
-void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float distanceBetweenEyesM ) {
+void Stereo::cvDisparityDepth(float focalLengthMM,
+                              float sensorSizeMM,
+                              float distanceBetweenEyesM,
+                              uint maxDisprity ) {
 
     cv::Mat left32(mSide, mSide, CV_32FC1, mLeft.data());
     cv::Mat right32(mSide, mSide, CV_32FC1, mRight.data());
@@ -169,7 +170,7 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
 
     // Configure StereoSGBM parameters
     int minDisparity = 0;
-    int numDisparities = 64; // Must be divisible by 16
+    int numDisparities = maxDisprity; // Must be divisible by 16
     int blockSize = 3;       // Must be an odd number >= 1
 
     cv::Ptr<cv::StereoSGBM> sgbm = cv::StereoSGBM::create(
@@ -180,7 +181,6 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
 
     // Set additional SGBM parameters for smoother maps
     // (AI generated)
-
     sgbm->setP1(8 * left.channels() * blockSize * blockSize);
     sgbm->setP2(32 * left.channels() * blockSize * blockSize);
     sgbm->setDisp12MaxDiff(1);
@@ -253,7 +253,12 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
     qDebug() << "Min&Max depth:" << depthMin << depthMax;
     qDebug() << "fB:" << fB16;
 
-    depthMax = 20;// trash f*ck it yeah
+    /////////////////////////////////////////////////////////////////////
+    // This here is because there is some small amount of values that are
+    // way bigger then others and the depth image is loking very dark
+    // after "normalization"
+    depthMax = 20; // trash
+    /////////////////////////////////////////////////////////////////////
 
     float depthDeltaInv = 255.0f / (depthMax - depthMin);
 
@@ -273,5 +278,92 @@ void Stereo::cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float dis
             mDepthImage.setPixelColor( x, y, col );
         }
     }
+}
+
+void Stereo::myDisparityDepth(float focalLengthMM,
+                              float sensorSizeMM,
+                              float distanceBetweenEyesM,
+                              uint maxDisparity)
+{
+    float focalLengthPx = focalLengthMM / sensorSizeMM * mSide;
+    float fB = focalLengthPx * distanceBetweenEyesM;
+
+    // Smaller (and faster) representations of the floating point image intensities
+    QVector<quint8> left, right;
+    left.resize(mPixelsCount);
+    right.resize(mPixelsCount);
+    for( auto i = 0; i < mPixelsCount; i++) {
+        left[i] = static_cast<quint8>(mLeft[i]);
+        right[i] = static_cast<quint8>(mRight[i]);
+    }
+
+    // Allocate cost volume
+    QVector<QVector<quint8>> costVol;
+
+    costVol.resize(mPixelsCount);
+    for( auto i = 0; i < mPixelsCount; i ++) {
+        costVol[i].resize(maxDisparity);
+    }
+
+    auto getPixelIndex = [&](bool isRight, int index) {
+        return isRight ? right[index] : left[index];
+    };
+
+    auto getPixel = [&](bool isRight, int x, int y) {
+        // Clamping is a bit ugly and need to be optimized, but not now...
+        x = std::clamp(x, 0, static_cast<int>(mSide-1));
+        y = std::clamp(y, 0, static_cast<int>(mSide-1));
+        return getPixelIndex(isRight, y*mSide + x);
+    };
+
+    auto calcDescriptor = [&](bool isRight, int x, int y) {
+        quint8 d = 0;
+        quint8 p = getPixel(isRight, x, y);
+        d |= getPixel(isRight, x-1, y-1) > p ? 1 : 0; d <<= 1;
+        d |= getPixel(isRight, x  , y-1) > p ? 1 : 0; d <<= 1;
+        d |= getPixel(isRight, x+1, y-1) > p ? 1 : 0; d <<= 1;
+        d |= getPixel(isRight, x-1, y  ) > p ? 1 : 0; d <<= 1;
+        // d |= getPixel(isRight, x  , y  ) > p ? 1 : 0; d <<= 1; // current pixel
+        d |= getPixel(isRight, x+1, y  ) > p ? 1 : 0; d <<= 1;
+        d |= getPixel(isRight, x-1, y+1) > p ? 1 : 0; d <<= 1;
+        d |= getPixel(isRight, x  , y+1) > p ? 1 : 0; d <<= 1;
+        d |= getPixel(isRight, x+1, y+1) > p ? 1 : 0; d <<= 1;
+        return d;
+    };
+
+    auto HammingDistance = [&](quint8 bitDescA, quint8 bitDescB) {
+        // because __builtin_popcount() is available only on the GCC compiler
+        // and we don't need to see inline asm here
+        quint8 distance = 0;
+        quint8 bit = 1;
+        // Let's unroll it
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0; bit <<= 1;
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0; bit <<= 1;
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0; bit <<= 1;
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0; bit <<= 1;
+
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0; bit <<= 1;
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0; bit <<= 1;
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0; bit <<= 1;
+        distance += (bitDescA & bit) ^ (bitDescB & bit) ? 1 : 0;
+        return distance;
+    };
+
+    // Calculate Cost volume
+    for( auto y = 0; y < mSide; y ++) {
+        for( auto x = maxDisparity; x < mSide; x ++) {
+
+            quint8 leftDescriptor = calcDescriptor(false, x, y);
+            for( auto d = 0; d < maxDisparity; d ++) {
+                // -d if the right image appears on the left in the anaglyph image
+                // otherwise it will be +d, but we have "swap images" option in the GUI
+                quint8 rightDescriptor = calcDescriptor(true, x - d, y);
+                costVol[y*mSide + x][d] = HammingDistance(leftDescriptor, rightDescriptor);
+            }
+
+        }
+    }
+
+
 }
 

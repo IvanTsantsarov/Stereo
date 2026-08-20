@@ -21,9 +21,15 @@ class Stereo
     inline float leftValue(int x, int y){ return mLeft[x + y*mSide];}
     inline float rightValue(int x, int y){ return mRight[x + y*mSide];}
 
-    static bool isPowerOfTwo(uint value) { return value != 0 && (value & (value - 1)) == 0; }
+    void cvDisparityDepth(float focalLengthMM,
+                          float sensorSizeMM,
+                          float distanceBetweenEyesM,
+                          uint maxDisprity);
 
-    void cvDisparityDepth(float focalLengthMM, float sensorSizeMM, float distanceBetweenEyesM);
+    void myDisparityDepth(float focalLengthMM,
+                          float sensorSizeMM,
+                          float distanceBetweenEyesM,
+                          uint maxDisparity);
 
 
     bool mIsAborting = false;
@@ -45,8 +51,14 @@ public:
     const QImage& depthImage(){ return mDepthImage; }
     const QImage& anaglyphImage() { return mAnaglyphImage; }
 
-    void process(bool isOpenCV, float focalL, float sensorW, float distanceEyes);
+    void process(bool isOpenCV,
+                 float focalL,
+                 float sensorW,
+                 float distanceEyes,
+                 int maxDisparity);
     void abort(){ mIsAborting = true; }
+
+    static bool isPowerOfTwo(uint value) { return value != 0 && (value & (value - 1)) == 0; }
 private:
     Stage mStage = Initial;
 public:

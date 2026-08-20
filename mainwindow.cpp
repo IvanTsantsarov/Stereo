@@ -3,6 +3,7 @@
 #include "mainwindow.h"
 #include "stereo.h"
 #include "ui_mainwindow.h"
+#include <QMessageBox>
 
 MainWindow* gMainWindow = nullptr;
 QtMessageHandler gOriginalHandler = nullptr;
@@ -50,10 +51,22 @@ void MainWindow::process()
 {
     ui->btnProcess->setText("Processing...");
     QCoreApplication::processEvents();
+
+    if( ui->checkOpenCV->isChecked() ) {
+        uint maxDisp = ui->spinMaxDisparity->value();
+        if( !Stereo::isPowerOfTwo(maxDisp) || !(maxDisp >= 16) ) {
+            critical("In OpenCV Max Disparity or Disparity Count must be dividable by 16" );
+            ui->spinMaxDisparity->setFocus();
+            return;
+        }
+    }
+
+
     mStereo->process(ui->checkOpenCV->isChecked(),
                      ui->doubleFocalLenght->value(),
                      ui->doubleSensorSize->value(),
-                     ui->doubleEyeDistance->value());
+                     ui->doubleEyeDistance->value(),
+                     ui->spinMaxDisparity->value());
 }
 
 void MainWindow::setProgressSteps(uint steps)
@@ -84,6 +97,11 @@ void MainWindow::finished()
     ui->btnProcess->setText("Ready!");
 }
 
+void MainWindow::critical(const QString &msg, QString title)
+{
+    QMessageBox::critical(this, title, msg );
+}
+
 void MainWindow::loadImages()
 {
     QString filter = "Images (*.png *.jpg);;All Files (*)";
@@ -102,7 +120,7 @@ void MainWindow::loadImages()
     mStereo = new Stereo;
 
     if( !mStereo->loadImages(selected, ui->checkSwap->isChecked())) {
-        QMessageBox::critical(this, "Error opening image", mLastError );
+        critical(mLastError, "Error opening image" );
         return;
     }
 
@@ -156,7 +174,7 @@ void MainWindow::on_btnRight_clicked()
 void MainWindow::on_btnProcess_clicked()
 {
     if( !mStereo || !mStereo->hasImages()) {
-        QMessageBox::critical(this, "No ready!", "First press upper left or right image slots to load left & right images...");
+        critical("First press upper left or right image slots to load left & right images...", "No ready!");
         return;
     }
 

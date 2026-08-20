@@ -34,6 +34,8 @@ public:
     void aborted();
     void finished();
 
+    void critical(const QString& msg, QString title = "Error");
+
 private slots:
     void on_btnLeft_clicked();
 
