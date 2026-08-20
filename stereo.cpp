@@ -397,7 +397,6 @@ void Stereo::myDisparityDepth(float focalLengthMM,
         {
             const int x = isHorizontal ? primStart : sec;
             const int y = isHorizontal ? sec : primStart;
-
             int pixelIndex = y * mSide + x;
 
             // First pixel
@@ -412,6 +411,7 @@ void Stereo::myDisparityDepth(float focalLengthMM,
                 const int y = isHorizontal ? sec : prim;
                 int pixelIndex = y * mSide + x;
 
+                // Find the min of the previous cost
                 quint32 minPrev = prevCost[0];
                 for( quint16 val:prevCost) {
                     if( val < minPrev ) {
