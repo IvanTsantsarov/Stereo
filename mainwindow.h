@@ -16,9 +16,11 @@ class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
-    void loadImages();
+    bool loadImages(const QString& imagePath, bool isSwap);
+    void loadImagesDialog();
     Stereo* mStereo = nullptr;
     QString mLastError, mLastInfo;
+    QString mLastFile;
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
@@ -43,6 +45,8 @@ private slots:
 
     void on_btnProcess_clicked();
 
+
+    void on_checkSwap_toggled(bool checked);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;

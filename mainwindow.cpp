@@ -102,7 +102,20 @@ void MainWindow::critical(const QString &msg, QString title)
     QMessageBox::critical(this, title, msg );
 }
 
-void MainWindow::loadImages()
+bool MainWindow::loadImages(const QString &imagePath, bool isSwap)
+{
+    if( !mStereo->loadImages(imagePath, isSwap)) {
+        critical(mLastError, "Error opening image" );
+        return false;
+    }
+
+    MainWindow::setBtnImage(ui->btnLeft, mStereo->leftImage());
+    MainWindow::setBtnImage(ui->btnRight, mStereo->rightImage());
+    MainWindow::setBtnImage(ui->btnAnaglypth, mStereo->anaglyphImage());
+    return true;
+}
+
+void MainWindow::loadImagesDialog()
 {
     QString filter = "Images (*.png *.jpg);;All Files (*)";
     QString selected = QFileDialog::getOpenFileName( this,
@@ -119,14 +132,9 @@ void MainWindow::loadImages()
 
     mStereo = new Stereo;
 
-    if( !mStereo->loadImages(selected, ui->checkSwap->isChecked())) {
-        critical(mLastError, "Error opening image" );
-        return;
+    if( loadImages(selected, ui->checkSwap->isChecked()) ) {
+        mLastFile = selected;
     }
-
-    MainWindow::setBtnImage(ui->btnLeft, mStereo->leftImage());
-    MainWindow::setBtnImage(ui->btnRight, mStereo->rightImage());
-    MainWindow::setBtnImage(ui->btnAnaglypth, mStereo->anaglyphImage());
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -161,13 +169,13 @@ void MainWindow::onError(const QString &txt)
 
 void MainWindow::on_btnLeft_clicked()
 {
-    loadImages();
+    loadImagesDialog();
 }
 
 
 void MainWindow::on_btnRight_clicked()
 {
-    loadImages();
+    loadImagesDialog();
 }
 
 
@@ -213,5 +221,13 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     applyImage(ui->btnAnaglypth, mStereo->anaglyphImage());
     applyImage(ui->btnDisparity, mStereo->disparityImage());
     applyImage(ui->btnDepth, mStereo->depthImage());
+}
+
+
+void MainWindow::on_checkSwap_toggled(bool checked)
+{
+    if( !mLastFile.isEmpty() ) {
+        loadImages(mLastFile, ui->checkSwap->isChecked());
+    }
 }
 

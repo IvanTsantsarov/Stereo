@@ -382,6 +382,7 @@ void Stereo::myDisparityDepth(float focalLengthMM,
         }
     };
 
+
     auto aggregate = [&](bool isHorizontal, int dir)
     {
         QVector<quint32> prevCost(maxDisparity);
@@ -422,14 +423,19 @@ void Stereo::myDisparityDepth(float focalLengthMM,
                 for( int d = 0; d < maxDisparity; d++ ) {
                     quint32 best = prevCost[d];
 
+                    // max border disparity
                     if (d > 0) {
                         best = std::min( best, prevCost[d - 1] + P1 );
+                    }else{
+                        // nothing
                     }
 
+/*
+                    // max border disparity
                     if ((d + 1) < maxDisparity){
                         best = std::min( best, prevCost[d + 1] + P1 );
                     }
-
+*/
                     best = std::min(best, minPrev + P2);
 
                     quint32 value = static_cast<quint32>(costVol[pixelIndex][d]) + best - minPrev;
